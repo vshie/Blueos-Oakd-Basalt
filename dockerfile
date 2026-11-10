@@ -73,8 +73,8 @@ LABEL authors='[{"name": "Willian Galvani", "email": "willian@bluerobotics.com"}
 LABEL company='{"about": "", "name": "Blue Robotics", "email": "support@bluerobotics.com"}'
 LABEL type="device-integration"
 LABEL webpage='http://\{\{HOST\}\}:8080'
-LABEL readme='https://raw.githubusercontent.com/williangalvani/Blueos-Oakd-Basalt/{tag}/README.md'
-LABEL links='{"source": "https://github.com/williangalvani/Blueos-Oakd-Basalt"}'
+LABEL readme='https://raw.githubusercontent.com/vshie/Blueos-Oakd-Basalt/{tag}/README.md'
+LABEL links='{"source": "https://github.com/vshie/Blueos-Oakd-Basalt"}'
 LABEL requirements="core >= 1.1"
 
 # Environment variables

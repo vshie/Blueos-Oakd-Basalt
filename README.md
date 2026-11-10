@@ -212,12 +212,19 @@ The page is backed by a small HTTP API:
 
 The image is built for **64-bit ARM (arm64) only**. It won't run on 32-bit BlueOS installs; BlueOS flags the image as incompatible, and System Information shows a kernel ending in `-v7l+`. Flash a 64-bit BlueOS image first.
 
+Pick the image that matches the code you want:
+
+| Source | Docker image | Docker tag |
+|---|---|---|
+| This fork's `tonytest` branch, built by GitHub Actions | `ghcr.io/vshie/blueos-oakd-basalt` | `tonytest` |
+| A `.tar` you built with `build_tar.sh` | `blueos-oakd-basalt` | `local` (or your `TAG`) |
+| Upstream (Williangalvani, older code without capture, the widget or the parameter confirmation) | `williangalvani/blueos-oakd-basalt` | `arm64-rtabmap` |
+
 In BlueOS, go to **Extensions → Installed → +** and fill in:
 
 - **Extension Identifier**: `williangalvani.oakd-basalt`
 - **Extension Name**: `Oak-D Basalt VIO`
-- **Docker image**: `williangalvani/blueos-oakd-basalt` (or the name of a locally built image, see below)
-- **Docker tag**: `arm64-rtabmap`
+- **Docker image** and **Docker tag**: from the table above
 - **Custom settings**:
 
 ```json
@@ -232,6 +239,19 @@ In BlueOS, go to **Extensions → Installed → +** and fill in:
 ```
 
 Host networking lets the extension find a PoE camera such as the C3. `/dev` and the `c 189:*` cgroup rule give the container access to a USB OAK-D.
+
+### Images built by GitHub Actions
+
+Every push to `tonytest` runs [`.github/workflows/build.yml`](.github/workflows/build.yml): it builds the arm64 image, runs the tests, and publishes the result in two places:
+
+- **GHCR:** `ghcr.io/vshie/blueos-oakd-basalt:tonytest`. New GHCR packages are private, so for BlueOS to pull it without logging in, make the package public once: GitHub → your profile → **Packages** → `blueos-oakd-basalt` → **Package settings** → **Change visibility**.
+- **Artifact:** `oakd-vio-arm64-tonytest.tar` on the workflow run's page (kept 14 days), for vehicles without internet. Upload it in BlueOS (see below) with image `ghcr.io/vshie/blueos-oakd-basalt` and tag `tonytest`, the name stored inside the `.tar`.
+
+No secrets need to be configured. The prebuilt builder image is pulled anonymously from Docker Hub, and publishing to GHCR uses the `GITHUB_TOKEN` GitHub gives every workflow run.
+
+### Vehicles without internet
+
+Use the `.tar` artifact from GitHub Actions, or build one locally (below), and upload it with BlueOS's extension manager (BlueOS versions with Kraken v2). Use the same identifier, name and custom settings as above, and the image name and tag stored in that `.tar`.
 
 ### Building a .tar locally
 
