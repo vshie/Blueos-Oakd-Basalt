@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OAK-D VIO Configuration</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            margin: 0;
+            padding: 20px;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { color: #00d4ff; margin-bottom: 10px; }
+        h2 { color: #888; font-size: 14px; margin-top: 30px; margin-bottom: 15px; text-transform: uppercase; }
+        .status {
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .status.running { background: #1a4d1a; }
+        .status.stopped { background: #4d1a1a; }
+        .status-dot { width: 12px; height: 12px; border-radius: 50%; animation: pulse 2s infinite; flex: none; }
+        .status.running .status-dot { background: #00ff00; }
+        .status.stopped .status-dot { background: #ff0000; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+        .panel { background: #16213e; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
+        .field { background: #16213e; padding: 15px; border-radius: 8px; }
+        .field.disabled { opacity: 0.4; }
+        label { display: block; font-size: 12px; color: #888; margin-bottom: 5px; text-transform: uppercase; }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #333;
+            border-radius: 4px;
+            background: #0f0f23;
+            color: #fff;
+            font-size: 16px;
+        }
+        input[type=checkbox] { width: auto; }
+        input:focus { outline: none; border-color: #00d4ff; }
+        .hint { font-size: 11px; color: #666; margin-top: 5px; }
+        .warn { color: #ffb84d; }
+        .bad { color: #ff6b6b; }
+        .good { color: #4dff88; }
+
+        .buttons { display: flex; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        button:disabled { opacity: 0.4; cursor: default; }
+        .btn-primary { background: #00d4ff; color: #000; }
+        .btn-success { background: #00cc66; color: #000; }
+        .btn-danger { background: #cc3333; color: #fff; }
+        .btn-secondary { background: #444; color: #fff; }
+        .btn-warn { background: #e69500; color: #000; }
+        .btn-active { outline: 3px solid #fff; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #2a2a4a; }
+        th { color: #888; font-weight: 500; font-size: 12px; text-transform: uppercase; }
+        .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; background: #444; }
+        .badge.ok, .badge.applied { background: #1a4d1a; }
+        .badge.pending, .badge.armed, .badge.no_heartbeat { background: #6b4d00; }
+        .badge.unreachable, .badge.error { background: #4d1a1a; }
+        pre { white-space: pre-wrap; font-size: 12px; color: #aaa; margin: 8px 0 0; }
+        a { color: #00d4ff; }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 8px;
+            color: #fff;
+            opacity: 0;
+            transition: opacity 0.3s;
+            max-width: 90vw;
+        }
+        .toast.show { opacity: 1; }
+        .toast.success { background: #00cc66; }
+        .toast.error { background: #cc3333; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎥 OAK-D Visual Odometry</h1>
+
+        <div id="status" class="status stopped">
+            <div class="status-dot"></div>
+            <span id="status-text">Checking...</span>
+        </div>
+
+        <h2>🛠 Autopilot Parameters</h2>
+        <div class="panel">
+            <div><span id="param-badge" class="badge">unknown</span> <span id="param-message"></span></div>
+            <div id="param-origin" class="hint"></div>
+            <table id="param-table" style="display:none; margin-top:10px">
+                <thead><tr><th>Parameter</th><th>Current</th><th>Required</th><th>Reboot?</th></tr></thead>
+                <tbody></tbody>
+            </table>
+            <div class="buttons">
+                <button type="button" class="btn-warn" id="param-apply" style="display:none" onclick="applyParams()">Apply changes</button>
+                <button type="button" class="btn-secondary" onclick="recheckParams()">Re-check</button>
+            </div>
+        </div>
+
+        <h2>📸 Image Capture</h2>
+        <div class="panel">
+            <div class="buttons" style="margin-top:0">
+                <button type="button" class="btn-danger" id="cap-record" onclick="captureMode('record')">⏺ Record</button>
+                <button type="button" class="btn-primary" id="cap-auto" onclick="captureMode('auto')">🅰 Auto</button>
+                <button type="button" class="btn-secondary" id="cap-stop" onclick="captureMode('stop')">⏹ Stop</button>
+            </div>
+            <div id="capture-state" style="margin-top:10px"></div>
+            <div class="hint">Record captures continuously. Auto records only while the ROV runs an armed AUTO mission, one leg per waypoint. Recording is always off when the extension starts.</div>
+            <table id="sessions" style="margin-top:10px">
+                <thead><tr><th>Folder</th><th>Images</th><th>Size</th><th></th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <form id="config-form">
+            <h2>📷 Camera</h2>
+            <div class="grid">
+                <div class="field">
+                    <label>Camera IP</label>
+                    <input type="text" name="camera_ip" placeholder="auto-discover">
+                    <div class="hint">Blank = first camera found. <a href="#" onclick="discover(); return false">Discover</a></div>
+                    <div id="devices" class="hint"></div>
+                </div>
+                <div class="field">
+                    <label>VIO FPS</label>
+                    <input type="number" name="fps" min="1" max="60">
+                    <div class="hint">Lower = less CPU usage</div>
+                </div>
+                <div class="field">
+                    <label>Camera Angle (°)</label>
+                    <input type="number" name="camera_angle" step="0.1">
+                    <div class="hint">0 = forward, 90 = down</div>
+                </div>
+                <div class="field">
+                    <label>VIO Width</label>
+                    <input type="number" name="resolution_width" min="160" max="1280">
+                </div>
+                <div class="field">
+                    <label>VIO Height</label>
+                    <input type="number" name="resolution_height" min="100" max="800">
+                </div>
+            </div>
+
+            <h2>🔧 VIO Algorithm</h2>
+            <div class="grid">
+                <div class="field">
+                    <label>Backend</label>
+                    <select name="vio_backend" onchange="updateBackendFields()">
+                        <option value="basalt">Basalt (on the Pi)</option>
+                        <option value="rtabmap">RTAB-Map (depth + features on the OAK)</option>
+                    </select>
+                    <div class="hint">RTAB-Map: stereo depth and feature tracking run on the camera, pose estimation on the Pi. No VIO_* quality messages.</div>
+                </div>
+                <div class="field basalt">
+                    <label>Optical Flow Grid Size</label>
+                    <input type="number" name="optical_flow_grid_size" min="20" max="200">
+                    <div class="hint">Higher = fewer features, faster</div>
+                </div>
+                <div class="field basalt">
+                    <label>Flow Iterations</label>
+                    <input type="number" name="optical_flow_max_iterations" min="1" max="10">
+                </div>
+                <div class="field basalt">
+                    <label>Pyramid Levels</label>
+                    <input type="number" name="optical_flow_levels" min="1" max="5">
+                </div>
+                <div class="field basalt">
+                    <label>Skip Frames</label>
+                    <input type="number" name="optical_flow_skip_frames" min="0" max="10">
+                </div>
+                <div class="field basalt">
+                    <label>Max States</label>
+                    <input type="number" name="vio_max_states" min="1" max="10">
+                </div>
+                <div class="field basalt">
+                    <label>Max Keyframes</label>
+                    <input type="number" name="vio_max_kfs" min="2" max="20">
+                </div>
+                <div class="field basalt">
+                    <label>VIO Iterations</label>
+                    <input type="number" name="vio_max_iterations" min="1" max="10">
+                </div>
+                <div class="field rtabmap">
+                    <label>Tracked Features</label>
+                    <input type="number" name="rtabmap_features" min="50" max="2000">
+                    <div class="hint">Features tracked on the OAK</div>
+                </div>
+            </div>
+
+            <h2>🖼 Capture Settings</h2>
+            <div class="grid">
+                <div class="field">
+                    <label>Centre Capture FPS</label>
+                    <input type="number" name="center_capture_fps" step="0.1" min="0" max="10" oninput="updateEstimate()">
+                    <div class="hint">IMX378 colour. 0 = off</div>
+                </div>
+                <div class="field">
+                    <label>Centre Resolution</label>
+                    <select name="center_resolution" onchange="updateEstimate()">
+                        <option value="4056x3040">4056 × 3040 (12 MP)</option>
+                        <option value="3840x2160">3840 × 2160 (4K)</option>
+                        <option value="1920x1080">1920 × 1080</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Stereo Capture FPS</label>
+                    <input type="number" name="stereo_capture_fps" step="0.1" min="0" max="30" oninput="updateEstimate()">
+                    <div class="hint">OV9282 left + right pairs. 0 = off. ≤ VIO FPS</div>
+                </div>
+                <div class="field">
+                    <label>Stereo Resolution</label>
+                    <select name="mono_resolution" onchange="updateEstimate()">
+                        <option value="1280x800">1280 × 800</option>
+                        <option value="640x400">640 × 400</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>JPEG Quality</label>
+                    <input type="number" name="jpeg_quality" min="1" max="100" oninput="updateEstimate()">
+                </div>
+                <div class="field">
+                    <label>Minimum Free Space (GB)</label>
+                    <input type="number" name="capture_min_free_gb" step="0.5" min="0.5">
+                    <div class="hint">Recording stops below this</div>
+                </div>
+                <div class="field">
+                    <label>Encode Stereo on the Pi</label>
+                    <input type="checkbox" name="mono_host_encode">
+                    <div class="hint">Only if the camera can't JPEG-encode the mono streams. More link and CPU use.</div>
+                </div>
+            </div>
+            <div id="estimate" class="hint" style="margin-top:10px"></div>
+
+            <h2>📡 MAVLink Output</h2>
+            <div class="grid">
+                <div class="field">
+                    <label>Vehicle IP</label>
+                    <input type="text" name="vehicle_ip">
+                    <div class="hint">This ROV's BlueOS; position, heading and depth for the images come from here</div>
+                </div>
+                <div class="field">
+                    <label>Quality Rate (Hz)</label>
+                    <input type="number" name="quality_rate" step="0.1" min="0.1" max="10">
+                </div>
+            </div>
+
+            <div class="buttons">
+                <button type="submit" class="btn-primary">💾 Save & Restart</button>
+                <button type="button" class="btn-success" onclick="startVIO()">▶️ Start</button>
+                <button type="button" class="btn-danger" onclick="stopVIO()">⏹️ Stop</button>
+                <button type="button" class="btn-secondary" onclick="resetDefaults()">↩️ Reset Defaults</button>
+            </div>
+        </form>
+
+        <h2>🧭 IMU</h2>
+        <div class="panel">
+            <div class="hint">These tools need the camera, so stop VIO first. The OAK-D W PoE has a BNO086 (or BMI270 on many 2021–2023 units). The C3's in-water calibration may not include IMU-to-camera extrinsics, which Basalt relies on.</div>
+            <div class="buttons">
+                <button type="button" class="btn-secondary imu-btn" onclick="imuAction('detect')">Detect IMU</button>
+                <button type="button" class="btn-secondary imu-btn" onclick="imuAction('static-test?seconds=30')">Static test (30 s)</button>
+                <button type="button" class="btn-secondary imu-btn" onclick="imuAction('record-euroc?seconds=90')">Record Kalibr dataset (90 s)</button>
+            </div>
+            <div id="imu-job" style="margin-top:10px"></div>
+            <div id="imu-report"></div>
+            <h2 style="margin-top:20px">Apply Kalibr result</h2>
+            <div class="hint">Upload <code>camchain-imucam.yaml</code> from <code>kalibr_calibrate_imu_camera</code> (cam0 = left). This writes the IMU extrinsics to the camera's EEPROM after backing up the current calibration to the extension's data folder.</div>
+            <div class="buttons">
+                <input type="file" id="kalibr-file" accept=".yaml,.yml" style="max-width:300px">
+                <button type="button" class="btn-warn imu-btn" onclick="flashExtrinsics()">Write to camera</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+        const NUMERIC_TEXT = ['camera_ip', 'vehicle_ip', 'vio_backend', 'center_resolution', 'mono_resolution'];
+        let vioRunning = false;
+
+        function showToast(message, type) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast show ' + type;
+            setTimeout(() => toast.className = 'toast', 4000);
+        }
+
+        async function api(path, options) {
+            const res = await fetch(path, options);
+            let body = null;
+            try { body = await res.json(); } catch (e) {}
+            if (!res.ok) {
+                let detail = body && body.detail;
+                if (Array.isArray(detail)) detail = detail.map(d => d.msg).join('; ');
+                throw new Error(detail || res.statusText);
+            }
+            return body;
+        }
+
+        function el(tag, text, cls) {
+            const e = document.createElement(tag);
+            if (text !== undefined && text !== null) e.textContent = text;
+            if (cls) e.className = cls;
+            return e;
+        }
+
+        function fmt(v, digits) { return (v === null || v === undefined) ? '—' : Number(v).toFixed(digits); }
+
+        // ---------------- config form ----------------
+        async function loadConfig() {
+            const config = await api('/api/config');
+            const form = document.getElementById('config-form');
+            for (const [key, value] of Object.entries(config)) {
+                const input = form.elements[key];
+                if (!input) continue;
+                if (input.type === 'checkbox') input.checked = !!value; else input.value = value;
+            }
+            updateBackendFields();
+            updateEstimate();
+        }
+
+        function formConfig() {
+            const form = document.getElementById('config-form');
+            const config = {};
+            for (const input of form.elements) {
+                if (!input.name) continue;
+                if (input.type === 'checkbox') config[input.name] = input.checked;
+                else if (NUMERIC_TEXT.includes(input.name)) config[input.name] = input.value.trim();
+                else config[input.name] = parseFloat(input.value);
+            }
+            return config;
+        }
+
+        function updateBackendFields() {
+            const backend = document.getElementById('config-form').elements['vio_backend'].value;
+            document.querySelectorAll('.field.basalt').forEach(e => e.classList.toggle('disabled', backend !== 'basalt'));
+            document.querySelectorAll('.field.rtabmap').forEach(e => e.classList.toggle('disabled', backend !== 'rtabmap'));
+        }
+
+        function updateEstimate() {
+            // Rough MJPEG size: ~0.25 bytes/pixel at quality 90, scaling with quality
+            const c = formConfig();
+            const q = Math.max(10, c.jpeg_quality || 90) / 90;
+            const px = s => s.split('x').map(Number).reduce((a, b) => a * b);
+            const center = (c.center_capture_fps || 0) * px(c.center_resolution) * 0.25 * q;
+            const monoBpp = c.mono_host_encode ? 1.0 : 0.25 * q;
+            const stereo = 2 * (c.stereo_capture_fps || 0) * px(c.mono_resolution) * monoBpp;
+            const vio = 2 * (c.fps || 0) * (c.resolution_width || 0) * (c.resolution_height || 0);
+            const mbit = (center + stereo + vio) * 8 / 1e6;
+            const e = document.getElementById('estimate');
+            e.textContent = `Estimated camera link use: ~${mbit.toFixed(0)} Mbit/s of 100 (capture ${((center + stereo) * 8 / 1e6).toFixed(0)}, VIO ${(vio * 8 / 1e6).toFixed(0)}).`;
+            e.className = 'hint' + (mbit > 60 ? ' bad' : '');
+            if (mbit > 60) e.textContent += ' Too close to the C3\'s 100 Mbit link: lower resolution, rate or quality.';
+        }
+
+        document.getElementById('config-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            try {
+                await api('/api/config', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                          body: JSON.stringify(formConfig())});
+                showToast('Configuration saved! Restarting VIO...', 'success');
+                setTimeout(refresh, 2000);
+            } catch (err) {
+                showToast('Error saving configuration: ' + err.message, 'error');
+            }
+        });
+
+        async function startVIO() {
+            try { await api('/api/start', {method: 'POST'}); showToast('VIO started', 'success'); }
+            catch (err) { showToast(err.message, 'error'); }
+            setTimeout(refresh, 1000);
+        }
+
+        async function stopVIO() {
+            await api('/api/stop', {method: 'POST'});
+            showToast('VIO stopped', 'success');
+            setTimeout(refresh, 1000);
+        }
+
+        async function resetDefaults() {
+            if (!confirm('Restore all settings to their defaults and restart VIO?')) return;
+            await api('/api/reset', {method: 'POST'});
+            showToast('Reset to defaults. Reloading...', 'success');
+            setTimeout(() => location.reload(), 1000);
+        }
+
+        async function discover() {
+            const box = document.getElementById('devices');
+            box.textContent = 'Searching...';
+            try {
+                const result = await api('/api/devices');
+                box.textContent = '';
+                if (!result.ok) { box.textContent = result.error; return; }
+                if (!result.devices.length) { box.textContent = 'No cameras found. Is the eth0 DHCP server on?'; return; }
+                for (const d of result.devices) {
+                    const a = el('a', `${d.name} (${d.state})`);
+                    a.href = '#';
+                    a.onclick = () => { document.getElementById('config-form').elements['camera_ip'].value = d.name; return false; };
+                    box.appendChild(a);
+                    box.appendChild(el('br'));
+                }
+                if (result.vio_running) box.appendChild(el('span', 'VIO is running, so its camera shows as in use.'));
+            } catch (err) {
+                box.textContent = err.message;
+            }
+        }
+
+        // ---------------- parameters ----------------
+        function renderParams(p) {
+            const badge = document.getElementById('param-badge');
+            badge.textContent = p.state;
+            badge.className = 'badge ' + p.state;
+            document.getElementById('param-message').textContent = p.message || '';
+            document.getElementById('param-origin').textContent = p.origin
+                ? `EKF origin: ${p.origin.lat.toFixed(6)}, ${p.origin.lon.toFixed(6)}`
+                : 'EKF origin: not set yet (set it from Cockpit to geotag images)';
+            const table = document.getElementById('param-table');
+            const body = table.querySelector('tbody');
+            body.textContent = '';
+            for (const d of p.diffs || []) {
+                const tr = el('tr');
+                tr.appendChild(el('td', d.name));
+                tr.appendChild(el('td', d.current === null ? 'not reported' : d.current));
+                tr.appendChild(el('td', d.wanted));
+                tr.appendChild(el('td', d.reboot_required ? 'yes' : 'no'));
+                body.appendChild(tr);
+            }
+            table.style.display = (p.diffs || []).length ? '' : 'none';
+            document.getElementById('param-apply').style.display =
+                ['pending', 'armed'].includes(p.state) ? '' : 'none';
+        }
+
+        async function recheckParams() {
+            document.getElementById('param-message').textContent = 'Checking...';
+            try { renderParams(await api('/api/params/check', {method: 'POST'})); }
+            catch (err) { showToast(err.message, 'error'); }
+        }
+
+        async function applyParams() {
+            if (!confirm('Write these parameters to the autopilot? The vehicle must be disarmed. Any custom EKF source setup will be replaced.')) return;
+            try {
+                renderParams(await api('/api/params/apply', {method: 'POST'}));
+                showToast('Parameters written', 'success');
+            } catch (err) { showToast(err.message, 'error'); }
+        }
+
+        // ---------------- capture ----------------
+        async function captureMode(mode) {
+            try { renderCapture(await api('/api/capture/' + mode, {method: 'POST'}), null); }
+            catch (err) { showToast(err.message, 'error'); }
+        }
+
+        function renderCapture(c, vioCapture) {
+            for (const [id, mode] of [['cap-record', 'manual'], ['cap-auto', 'auto'], ['cap-stop', 'off']]) {
+                document.getElementById(id).classList.toggle('btn-active', c.mode === mode);
+            }
+            const box = document.getElementById('capture-state');
+            box.textContent = '';
+            let line = 'Mode: ' + {off: 'stopped', manual: 'Record', auto: 'Auto'}[c.mode];
+            if (c.mode === 'auto' && c.transect) {
+                line += ` — ${c.transect.state}`;
+                if (c.transect.wp) line += ` at ${c.transect.wp} (leg ${c.transect.legs})`;
+            }
+            if (c.control && c.control.recording) line += ` — recording ${c.control.source_tag}`;
+            box.appendChild(el('div', line));
+            if (vioCapture) {
+                box.appendChild(el('div', `Session: ${vioCapture.center_images} centre images, ${vioCapture.stereo_pairs} stereo pairs in ${vioCapture.day_folder || '—'}`, 'hint'));
+                if (vioCapture.error) box.appendChild(el('div', vioCapture.error, 'hint bad'));
+            }
+            box.appendChild(el('div', `Free space: ${fmt(c.free_gb, 1)} GB`, 'hint'));
+        }
+
+        async function loadSessions() {
+            const body = document.querySelector('#sessions tbody');
+            const sessions = await api('/api/captures');
+            body.textContent = '';
+            for (const s of sessions) {
+                const tr = el('tr');
+                tr.appendChild(el('td', s.name));
+                tr.appendChild(el('td', s.png ? `${s.png} png` : `${s.jpg} jpg`));
+                tr.appendChild(el('td', `${s.size_mb} MB`));
+                const td = el('td');
+                const a = el('a', 'Download zip');
+                a.href = `/api/captures/${encodeURIComponent(s.name)}/zip`;
+                td.appendChild(a);
+                tr.appendChild(td);
+                body.appendChild(tr);
+            }
+        }
+
+        // ---------------- IMU ----------------
+        async function imuAction(action) {
+            try { renderImu(await api('/api/imu/' + action, {method: 'POST'})); }
+            catch (err) { showToast(err.message, 'error'); }
+        }
+
+        async function flashExtrinsics() {
+            const file = document.getElementById('kalibr-file').files[0];
+            if (!file) { showToast('Choose camchain-imucam.yaml first', 'error'); return; }
+            if (!confirm('Write new IMU extrinsics to the camera EEPROM? The current calibration is backed up first.')) return;
+            const yaml = await file.text();
+            try {
+                renderImu(await api('/api/imu/flash-extrinsics', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                                  body: JSON.stringify({yaml, confirm: true})}));
+            } catch (err) { showToast(err.message, 'error'); }
+        }
+
+        function renderImu(data) {
+            document.querySelectorAll('.imu-btn').forEach(b => b.disabled = data.vio_running || data.job.state === 'running');
+            const job = document.getElementById('imu-job');
+            job.textContent = '';
+            if (data.vio_running) job.appendChild(el('div', 'Stop VIO to use the IMU tools.', 'hint warn'));
+            if (data.job.action) {
+                const r = data.job.result;
+                let text = `${data.job.action}: ${data.job.state}`;
+                if (r && !r.ok) text += ` — ${r.error}`;
+                if (r && r.ok && data.job.action === 'record-euroc') text += ` — ${r.folder}: ${r.counts.cam0} + ${r.counts.cam1} frames, ${r.counts.imu} IMU samples (download it under Image Capture)`;
+                if (r && r.ok && data.job.action === 'flash-extrinsics') text += ` — written; backup ${r.backup}. Restart VIO to use it.`;
+                job.appendChild(el('div', text, r && !r.ok ? 'bad' : ''));
+            }
+            const report = document.getElementById('imu-report');
+            report.textContent = '';
+            const d = data.report.detect;
+            if (d) {
+                report.appendChild(el('div', `Camera: ${d.camera} · IMU: ${d.imu || 'none'} (firmware ${d.imu_firmware || '—'})`, d.imu ? '' : 'bad'));
+                const x = d.extrinsics;
+                if (x.present) {
+                    report.appendChild(el('div', `IMU→left camera: t = [${x.translation_cm.map(v => v.toFixed(2)).join(', ')}] cm, ` +
+                        `r/p/y = ${fmt(x.rotation_deg.roll, 1)}/${fmt(x.rotation_deg.pitch, 1)}/${fmt(x.rotation_deg.yaw, 1)}°`, 'hint'));
+                }
+                for (const w of (x.warnings || []).concat(d.warnings || [])) report.appendChild(el('div', '⚠ ' + w, 'warn'));
+            }
+            const s = data.report['static-test'];
+            if (s) {
+                const g = s.gyro;
+                report.appendChild(el('div', `Static test: ${s.pass ? 'PASS' : 'CHECK'} · ${s.sample_rate_hz} Hz · accel |g| ${s.accel_norm} m/s² · ` +
+                    `gyro bias ${g.x.bias_dps}/${g.y.bias_dps}/${g.z.bias_dps} °/s`, s.pass ? 'good' : 'warn'));
+                for (const w of s.warnings) report.appendChild(el('div', '⚠ ' + w, 'warn'));
+            }
+        }
+
+        // ---------------- polling ----------------
+        async function refresh() {
+            try {
+                const t = await api('/api/telemetry');
+                vioRunning = t.vio.running;
+                const status = document.getElementById('status');
+                const text = document.getElementById('status-text');
+                if (t.vio.running) {
+                    status.className = 'status running';
+                    const v = t.vio.vio || {};
+                    const q = v.quality;
+                    let line = `VIO running (${t.vio.backend}) · ${fmt(v.fps, 1)} fps`;
+                    if (q) line += ` · ${q.tracking ? 'tracking' : 'LOST'} · quality ${fmt(q.tracking_quality, 2)}`;
+                    if (t.vio.imu) line += ` · IMU ${t.vio.imu}`;
+                    if (t.vio.chip_temp_c) line += ` · ${t.vio.chip_temp_c} °C`;
+                    if (t.vio.stale) line += ' · no update for 5 s';
+                    text.textContent = line;
+                } else {
+                    status.className = 'status stopped';
+                    text.textContent = 'VIO stopped' + (t.vio.error ? ': ' + t.vio.error : '');
+                }
+                renderParams(t.params);
+                renderCapture(t.capture, t.vio.capture);
+            } catch (err) {
+                document.getElementById('status-text').textContent = 'Extension not responding';
+            }
+            try { renderImu(await api('/api/imu')); } catch (err) {}
+        }
+
+        loadConfig();
+        refresh();
+        loadSessions();
+        setInterval(refresh, 3000);
+        setInterval(loadSessions, 15000);
+    </script>
+</body>
+</html>

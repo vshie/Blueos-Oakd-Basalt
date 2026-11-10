@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OAK VIO</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 8px;
+            background: rgba(10, 12, 20, 0.85);
+            color: #ddd;
+            font: 12px/1.35 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .row { display: flex; justify-content: space-between; gap: 8px; }
+        .k { color: #888; }
+        .v { font-variant-numeric: tabular-nums; text-align: right; }
+        .section { border-top: 1px solid #2a2f45; margin-top: 6px; padding-top: 6px; }
+        .title { font-weight: 700; color: #00d4ff; display: flex; justify-content: space-between; }
+        .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #666; margin-right: 4px; }
+        .dot.on { background: #3f3; }
+        .dot.rec { background: #f33; animation: blink 1s infinite; }
+        .dot.warn { background: #fb3; }
+        @keyframes blink { 50% { opacity: 0.3; } }
+        .buttons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 6px; }
+        button {
+            padding: 7px 0;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #1c2033;
+            color: #ddd;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        button.active.rec { background: #a11; border-color: #f55; color: #fff; }
+        button.active.auto { background: #046; border-color: #0cf; color: #fff; }
+        button.active.stop { background: #333; border-color: #888; }
+        .bad { color: #ff6b6b; }
+        .warn { color: #ffb84d; }
+        .good { color: #4dff88; }
+        a { color: #00d4ff; }
+    </style>
+</head>
+<body>
+    <div class="title"><span><span id="vio-dot" class="dot"></span>OAK VIO</span><a href="/" target="_blank">setup</a></div>
+
+    <div class="buttons">
+        <button id="b-manual" class="rec" onclick="mode('record')">⏺ REC</button>
+        <button id="b-auto" class="auto" onclick="mode('auto')">AUTO</button>
+        <button id="b-off" class="stop" onclick="mode('stop')">⏹ STOP</button>
+    </div>
+
+    <div class="section" id="capture"></div>
+    <div class="section" id="vio"></div>
+    <div class="section" id="vehicle"></div>
+    <div class="section" id="system"></div>
+
+    <script>
+        const f = (v, d, unit) => (v === null || v === undefined) ? '—' : Number(v).toFixed(d) + (unit || '');
+
+        function rows(id, items) {
+            const box = document.getElementById(id);
+            box.textContent = '';
+            for (const [k, v, cls] of items) {
+                const row = document.createElement('div');
+                row.className = 'row';
+                const a = document.createElement('span'); a.className = 'k'; a.textContent = k;
+                const b = document.createElement('span'); b.className = 'v ' + (cls || ''); b.textContent = v;
+                row.append(a, b);
+                box.appendChild(row);
+            }
+        }
+
+        async function mode(m) {
+            try { await fetch('/api/capture/' + m, {method: 'POST'}); } catch (e) {}
+            refresh();
+        }
+
+        async function refresh() {
+            let t;
+            try { t = await (await fetch('/api/telemetry')).json(); }
+            catch (e) { rows('vio', [['extension', 'not responding', 'bad']]); return; }
+
+            const c = t.capture;
+            const recording = c.control && c.control.recording;
+            for (const [id, m] of [['b-manual', 'manual'], ['b-auto', 'auto'], ['b-off', 'off']]) {
+                document.getElementById(id).classList.toggle('active', c.mode === m);
+            }
+            const vc = t.vio.capture || {};
+            const tr = c.transect;
+            const captureRows = [
+                ['capture', recording ? `● ${c.control.source_tag}` : ({off: 'stopped', manual: 'record', auto: 'auto'}[c.mode]),
+                 recording ? 'bad' : ''],
+            ];
+            if (c.mode === 'auto' && tr) captureRows.push(['transect', tr.state + (tr.wp ? ` ${tr.wp} · leg ${tr.legs}` : '')]);
+            captureRows.push(['images', `${vc.center_images ?? 0} ctr · ${vc.stereo_pairs ?? 0} pairs`]);
+            captureRows.push(['free', f(c.free_gb, 1, ' GB'), (c.free_gb !== null && c.free_gb < 5) ? 'warn' : '']);
+            if (vc.error) captureRows.push(['error', vc.error, 'bad']);
+            rows('capture', captureRows);
+
+            const dot = document.getElementById('vio-dot');
+            const v = t.vio.vio || {};
+            const q = v.quality;
+            if (t.vio.running) {
+                dot.className = 'dot ' + (q && !q.tracking ? 'warn' : 'on');
+                const vioRows = [['backend', t.vio.backend], ['rate', f(v.fps, 1, ' fps')]];
+                if (q) {
+                    vioRows.push(['tracking', q.tracking ? 'yes' : 'LOST', q.tracking ? 'good' : 'bad']);
+                    vioRows.push(['quality', f(q.tracking_quality, 2)]);
+                    vioRows.push(['features', q.tracked_features]);
+                    vioRows.push(['landmarks', q.landmarks]);
+                    vioRows.push(['proc', f(q.processing_time_s * 1000, 0, ' ms')]);
+                }
+                rows('vio', vioRows);
+            } else {
+                dot.className = 'dot';
+                rows('vio', [['VIO', t.vio.error || 'stopped', 'bad']]);
+            }
+
+            const p = t.vehicle;
+            rows('vehicle', [
+                ['position', p.lat !== null ? `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}` : 'no origin', p.lat === null ? 'warn' : ''],
+                ['heading', f(p.heading_deg, 0, '°')],
+                ['depth', f(p.depth_m, 2, ' m')],
+                ['altitude', f(p.altitude_m, 2, ' m')],
+            ]);
+
+            const params = t.params;
+            rows('system', [
+                ['camera', t.vio.camera ? `${t.vio.camera} ${t.vio.camera_ip || ''}` : (t.config.camera_ip || 'auto')],
+                ['IMU', t.vio.imu || '—'],
+                ['chip', f(t.vio.chip_temp_c, 0, ' °C')],
+                ['params', params.state, {ok: 'good', applied: 'good', pending: 'warn', armed: 'warn'}[params.state] || 'bad'],
+                ['origin', params.origin ? 'set' : 'not set', params.origin ? '' : 'warn'],
+            ]);
+        }
+
+        refresh();
+        setInterval(refresh, 1000);
+    </script>
+</body>
+</html>

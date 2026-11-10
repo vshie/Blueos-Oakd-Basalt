@@ -48,7 +48,16 @@ class MavlinkNode(dai.node.ThreadedHostNode):
         
         # Track if we're running
         self._running = False
-        
+
+        # Latest values, read by the telemetry writer and the capture node
+        self.stats_lock = threading.Lock()
+        self.last_pose = None  # (x, y, z, qw, qx, qy, qz)
+        self.last_quality = None  # dict, Basalt only
+        self.transform_count = 0
+        self._fps_window_start = time.time()
+        self._fps_window_count = 0
+        self.fps = 0.0
+
     def create_websocket_connection(self):
         """
         Create and manage websocket connection to mavlink2rest
@@ -218,25 +227,34 @@ class MavlinkNode(dai.node.ThreadedHostNode):
         self.last_quality_time = current_time
         
         # Send tracking quality (0.0 to 1.0)
-        self.send_named_value_float("VIO_TRACKING_QUALITY", quality_data.avgTrackingQuality, timestamp_us)
+        self.send_named_value_float("VIO_QUAL", quality_data.avgTrackingQuality, timestamp_us)
         
         # Send number of tracked features (normalized to 0-1 range, assuming max 1000 features)
         total_features = sum(quality_data.numTrackedFeatures) if quality_data.numTrackedFeatures else 0
         normalized_features = min(total_features / 1000.0, 1.0)  # Normalize to 0-1
-        self.send_named_value_float("VIO_TRACKED_FEATURES", normalized_features, timestamp_us)
+        self.send_named_value_float("VIO_FEAT", normalized_features, timestamp_us)
         
         # Send number of landmarks (normalized to 0-1 range, assuming max 10000 landmarks)
         normalized_landmarks = min(quality_data.numLandmarks / 10000.0, 1.0)
-        self.send_named_value_float("VIO_LANDMARKS", normalized_landmarks, timestamp_us)
+        self.send_named_value_float("VIO_LMK", normalized_landmarks, timestamp_us)
         
         # Send processing time in seconds
         processing_time_sec = quality_data.processingTimeMs / 1000.0
-        self.send_named_value_float("VIO_PROCESSING_TIME", processing_time_sec, timestamp_us)
+        self.send_named_value_float("VIO_PTIME", processing_time_sec, timestamp_us)
         
         # Send tracking status (1.0 if tracking, 0.0 if lost)
         tracking_status = 1.0 if quality_data.isTracking else 0.0
-        self.send_named_value_float("VIO_TRACKING_STATUS", tracking_status, timestamp_us)
+        self.send_named_value_float("VIO_TRACK", tracking_status, timestamp_us)
         
+        with self.stats_lock:
+            self.last_quality = {
+                "tracking_quality": quality_data.avgTrackingQuality,
+                "tracked_features": total_features,
+                "landmarks": quality_data.numLandmarks,
+                "processing_time_s": processing_time_sec,
+                "tracking": bool(quality_data.isTracking),
+            }
+
         logger.debug(f"Sent quality metrics: tracking_quality={quality_data.avgTrackingQuality:.3f}, "
                     f"features={normalized_features:.3f}, landmarks={normalized_landmarks:.3f}, "
                     f"processing_time={processing_time_sec:.3f}s, tracking_status={tracking_status}")
@@ -403,6 +421,30 @@ class MavlinkNode(dai.node.ThreadedHostNode):
         
         return transformed_translation, transformed_quaternion
 
+    def _record_pose(self, translation, quaternion):
+        now = time.time()
+        with self.stats_lock:
+            self.last_pose = (translation.x, translation.y, translation.z,
+                              quaternion.qw, quaternion.qx, quaternion.qy, quaternion.qz)
+            self.transform_count += 1
+            self._fps_window_count += 1
+            elapsed = now - self._fps_window_start
+            if elapsed >= 2.0:
+                self.fps = self._fps_window_count / elapsed
+                self._fps_window_start = now
+                self._fps_window_count = 0
+
+    def snapshot(self):
+        """Thread-safe copy of the latest pose, quality and rate."""
+        with self.stats_lock:
+            return {
+                "pose": self.last_pose,
+                "quality": dict(self.last_quality) if self.last_quality else None,
+                "transforms": self.transform_count,
+                "fps": round(self.fps, 2),
+                "mavlink_connected": self.ws_connected,
+            }
+
     def run(self):
         """
         Main processing loop - receive pose data and send via MAVLink
@@ -428,6 +470,7 @@ class MavlinkNode(dai.node.ThreadedHostNode):
                     
                     # Apply camera rotation transformation if needed
                     translation, quaternion = self.apply_camera_rotation(translation, quaternion)
+                    self._record_pose(translation, quaternion)
                     
                     # Calculate velocity (world frame) and position delta (body frame) from position changes
                     world_velocity, body_position_delta, time_delta_us = self.calculate_velocity_and_delta(translation, quaternion, timestamp_us)

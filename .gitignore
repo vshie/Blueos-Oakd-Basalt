@@ -352,3 +352,6 @@ calibration_data/
 # USB device files
 usb_devices.txt
 device_list.txt
+
+# Locally built extension images
+*.tar

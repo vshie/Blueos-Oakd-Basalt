@@ -1,0 +1,58 @@
+name: Build extension image
+
+on:
+  push:
+    branches: [tonytest]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  BUILDER_IMAGE: williangalvani/blueos-oakd-basalt-builder:arm64-rtabmap
+
+jobs:
+  build:
+    # Native arm64 runner: no QEMU, and only the runtime stage is built on top of the prebuilt builder
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image name
+        run: |
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/blueos-oakd-basalt" >> "$GITHUB_ENV"
+          echo "TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          build-args: BUILDER_IMAGE=${{ env.BUILDER_IMAGE }}
+          tags: ${{ env.IMAGE }}:${{ env.TAG }}
+          load: true
+
+      - name: Test
+        run: docker run --rm -v "$PWD/tests:/tests" "$IMAGE:$TAG" python -m unittest discover -s /tests -v
+
+      - name: Save .tar for BlueOS upload
+        run: docker save "$IMAGE:$TAG" -o "oakd-vio-arm64-$TAG.tar"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oakd-vio-arm64-${{ env.TAG }}
+          path: oakd-vio-arm64-${{ env.TAG }}.tar
+          retention-days: 14
+          compression-level: 0
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push to GHCR
+        run: docker push "$IMAGE:$TAG"

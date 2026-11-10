@@ -7,11 +7,11 @@ Publishes the following MAVLink messages:
 - NAMED_VALUE_FLOAT: VIO quality metrics for autopilot monitoring
 
 Quality metrics sent as NAMED_VALUE_FLOAT:
-- VIO_TRACKING_QUALITY: Average tracking quality (0.0-1.0)
-- VIO_TRACKED_FEATURES: Normalized number of tracked features (0.0-1.0)
-- VIO_LANDMARKS: Normalized number of landmarks (0.0-1.0)
-- VIO_PROCESSING_TIME: Processing time in seconds
-- VIO_TRACKING_STATUS: 1.0 if tracking, 0.0 if lost
+- VIO_QUAL: Average tracking quality (0.0-1.0)
+- VIO_FEAT: Normalized number of tracked features (0.0-1.0)
+- VIO_LMK: Normalized number of landmarks (0.0-1.0)
+- VIO_PTIME: Processing time in seconds
+- VIO_TRACK: 1.0 if tracking, 0.0 if lost
 
 Usage examples:
   python basalt.py                                    # Local BlueOS (127.0.0.1:6040)
@@ -27,7 +27,6 @@ import time
 import argparse
 import depthai as dai
 from mavlink_node import MavlinkNode
-from autopilot_params import AutopilotParams
 
 def parse_args():
     """Parse command line arguments"""
@@ -59,8 +58,6 @@ print(f"📐 Camera Angle: {args.camera_angle}°")
 print(f"📊 Quality Rate: {args.quality_rate} Hz")
 
 print(f"🌐 WebSocket URL: ws://{args.vehicle_ip}/mavlink2rest/ws/mavlink?filter=SEND_ONLY")
-
-AutopilotParams(args.vehicle_ip).configure_visual_odometry()
 
 # Create pipeline
 
@@ -104,11 +101,11 @@ with dai.Pipeline() as p:
     print("✅ Pipeline started successfully!")
     print("📡 Sending VIO data to autopilot via MAVLink...")
     print("📊 Quality metrics will be sent as NAMED_VALUE_FLOAT messages")
-    print("   - VIO_TRACKING_QUALITY: Average tracking quality (0.0-1.0)")
-    print("   - VIO_TRACKED_FEATURES: Normalized number of tracked features (0.0-1.0)")
-    print("   - VIO_LANDMARKS: Normalized number of landmarks (0.0-1.0)")
-    print("   - VIO_PROCESSING_TIME: Processing time in seconds")
-    print("   - VIO_TRACKING_STATUS: 1.0 if tracking, 0.0 if lost")
+    print("   - VIO_QUAL: Average tracking quality (0.0-1.0)")
+    print("   - VIO_FEAT: Normalized number of tracked features (0.0-1.0)")
+    print("   - VIO_LMK: Normalized number of landmarks (0.0-1.0)")
+    print("   - VIO_PTIME: Processing time in seconds")
+    print("   - VIO_TRACK: 1.0 if tracking, 0.0 if lost")
     print("")
     print("Press Ctrl+C to stop...")
     
