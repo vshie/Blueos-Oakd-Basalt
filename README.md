@@ -216,7 +216,7 @@ Pick the image that matches the code you want:
 
 | Source | Docker image | Docker tag |
 |---|---|---|
-| This fork's `tonytest` branch, built by GitHub Actions | `ghcr.io/vshie/blueos-oakd-basalt` | `tonytest` |
+| This fork's `tonytest` branch, built by GitHub Actions (Docker Hub) | `vshie/blueos-oakd-basalt` | `tonytest` |
 | A `.tar` you built with `build_tar.sh` | `blueos-oakd-basalt` | `local` (or your `TAG`) |
 | Upstream (Williangalvani, older code without capture, the widget or the parameter confirmation) | `williangalvani/blueos-oakd-basalt` | `arm64-rtabmap` |
 
@@ -242,12 +242,17 @@ Host networking lets the extension find a PoE camera such as the C3. `/dev` and 
 
 ### Images built by GitHub Actions
 
-Every push to `tonytest` runs [`.github/workflows/build.yml`](.github/workflows/build.yml): it builds the arm64 image, runs the tests, and publishes the result in two places:
+Every push to `tonytest` runs [`.github/workflows/build.yml`](.github/workflows/build.yml). It builds the arm64 image, runs the tests, and publishes the result in two places:
 
-- **GHCR:** `ghcr.io/vshie/blueos-oakd-basalt:tonytest`. New GHCR packages are private, so for BlueOS to pull it without logging in, make the package public once: GitHub → your profile → **Packages** → `blueos-oakd-basalt` → **Package settings** → **Change visibility**.
-- **Artifact:** `oakd-vio-arm64-tonytest.tar` on the workflow run's page (kept 14 days), for vehicles without internet. Upload it in BlueOS (see below) with image `ghcr.io/vshie/blueos-oakd-basalt` and tag `tonytest`, the name stored inside the `.tar`.
+- **Docker Hub:** `vshie/blueos-oakd-basalt:tonytest`, which BlueOS installs directly.
+- **Artifact:** `oakd-vio-arm64-tonytest.tar` on the workflow run's page (kept 14 days), for vehicles without internet. Upload it in BlueOS (see below) with image `vshie/blueos-oakd-basalt` and tag `tonytest`, the name stored inside the `.tar`.
 
-No secrets need to be configured. The prebuilt builder image is pulled anonymously from Docker Hub, and publishing to GHCR uses the `GITHUB_TOKEN` GitHub gives every workflow run.
+The workflow needs two repository secrets (GitHub → repository **Settings** → **Secrets and variables** → **Actions**):
+
+- `DOCKER_USERNAME`: the Docker Hub account. The image is pushed to `<DOCKER_USERNAME>/blueos-oakd-basalt`.
+- `DOCKER_PASSWORD`: a Docker Hub access token with write access (or the account password).
+
+The prebuilt builder image is public and pulled anonymously.
 
 ### Vehicles without internet
 
