@@ -146,7 +146,7 @@
                 <div class="field">
                     <label>VIO FPS</label>
                     <input type="number" name="fps" min="1" max="60" oninput="updateBackendFields()">
-                    <div class="hint">Lower = less CPU usage. RTAB-Map: ~10 on a Pi 4</div>
+                    <div class="hint">Lower = less CPU usage. Switching backend sets its default: Basalt 3, RTAB-Map 10</div>
                     <div id="fps-warning" class="hint warn" style="display:none">RTAB-Map loses tracking below ~8 fps. ~10 fps is what a Pi 4 sustains; more only adds frames the Pi drops.</div>
                 </div>
                 <div class="field">
@@ -168,7 +168,7 @@
             <div class="grid">
                 <div class="field">
                     <label>Backend</label>
-                    <select name="vio_backend" onchange="updateBackendFields()">
+                    <select name="vio_backend" onchange="onBackendChange()">
                         <option value="basalt">Basalt (on the Pi)</option>
                         <option value="rtabmap">RTAB-Map (depth + features on the OAK)</option>
                     </select>
@@ -356,6 +356,16 @@
                 else config[input.name] = parseFloat(input.value);
             }
             return config;
+        }
+
+        // Mirrors BACKEND_DEFAULT_FPS in main.py
+        const BACKEND_DEFAULT_FPS = {basalt: 3, rtabmap: 10};
+
+        function onBackendChange() {
+            const form = document.getElementById('config-form');
+            form.elements['fps'].value = BACKEND_DEFAULT_FPS[form.elements['vio_backend'].value];
+            updateBackendFields();
+            updateEstimate();
         }
 
         function updateBackendFields() {

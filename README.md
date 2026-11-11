@@ -189,7 +189,7 @@ Open `http://<vehicle>:8095` (or the extension's entry in the BlueOS menu). Savi
 | Setting | Default | Notes |
 |---|---|---|
 | Camera IP | blank | Blank = first camera found |
-| VIO FPS | 3 | Stereo frame rate for VIO. The Raspberry Pi CPU is the limit with Basalt; raise it slowly. RTAB-Map needs about 10 |
+| VIO FPS | 3 (Basalt) / 10 (RTAB-Map) | Stereo frame rate for VIO. Switching backend on the page sets that backend's default. Basalt runs all of VIO on the Pi; raise it slowly. RTAB-Map loses tracking below ~8 fps and a Pi 4 manages ~10 |
 | Camera Angle (°) | 0 | Downward pitch of the camera. 0 = facing forward, 90 = facing down |
 | VIO Width × Height | 320 × 200 | Mono resolution fed to VIO |
 | Backend | Basalt | Basalt or RTAB-Map, see above |

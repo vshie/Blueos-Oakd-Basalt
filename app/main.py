@@ -45,9 +45,15 @@ MONO_RESOLUTIONS = ("1280x800", "640x400")
 
 app = FastAPI(title="OAK-D VIO Configuration")
 
+# VIO frame rate each backend starts from. Basalt runs all of VIO on the Pi but fuses the IMU
+# tightly, so it copes with a low rate. RTAB-Map loses tracking around 3 fps, and its odometry is
+# one Pi thread that manages ~10 fps on a Pi 4; asking the camera for more only sends frames
+# the Pi drops. Mirrored in static/index.html (BACKEND_DEFAULT_FPS).
+BACKEND_DEFAULT_FPS = {"basalt": 3, "rtabmap": 10}
+
 # Default configuration
 DEFAULT_CONFIG = {
-    "fps": 3,
+    "fps": BACKEND_DEFAULT_FPS["basalt"],
     "camera_angle": 0.0,
     "camera_ip": "",
     "vehicle_ip": "192.168.2.2",
@@ -131,6 +137,14 @@ class VIOConfig(BaseModel):
         if value < 0:
             raise ValueError("Capture rate can't be negative (0 turns the stream off)")
         return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _backend_default_fps(cls, data):
+        # A config posted without a frame rate gets its backend's default, not Basalt's
+        if isinstance(data, dict) and data.get("fps") is None:
+            data = {**data, "fps": BACKEND_DEFAULT_FPS.get(data.get("vio_backend", "basalt"), 3)}
+        return data
 
     @model_validator(mode="after")
     def _stereo_rate(self):
