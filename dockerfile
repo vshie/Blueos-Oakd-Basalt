@@ -60,7 +60,7 @@ RUN chmod +x /app/entrypoint.sh
 # Labels
 LABEL version="0.0.3"
 LABEL permissions='{\
-  "ExposedPorts": {"8080/tcp": {}},\
+  "ExposedPorts": {"8095/tcp": {}},\
   "HostConfig": {\
     "NetworkMode": "host",\
     "Binds":["/dev/:/dev/", "/usr/blueos/extensions/oakd-vio:/app/data"],\
@@ -72,12 +72,14 @@ LABEL permissions='{\
 LABEL authors='[{"name": "Willian Galvani", "email": "willian@bluerobotics.com"}]'
 LABEL company='{"about": "", "name": "Blue Robotics", "email": "support@bluerobotics.com"}'
 LABEL type="device-integration"
-LABEL webpage='http://\{\{HOST\}\}:8080'
+LABEL webpage='http://\{\{HOST\}\}:8095'
 LABEL readme='https://raw.githubusercontent.com/vshie/Blueos-Oakd-Basalt/{tag}/README.md'
 LABEL links='{"source": "https://github.com/vshie/Blueos-Oakd-Basalt"}'
 LABEL requirements="core >= 1.1"
 
 # Environment variables
+# Web UI port. 8080 is taken by mavlink-server on BlueOS >= 1.5
+ENV PORT=8095
 ENV FPS=3
 ENV CAMERA_ANGLE=0.0
 ENV VEHICLE_IP=127.0.0.1

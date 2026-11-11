@@ -105,6 +105,8 @@
             if (t.vio.running) {
                 dot.className = 'dot ' + (q && !q.tracking ? 'warn' : 'on');
                 const vioRows = [['backend', t.vio.backend], ['rate', f(v.fps, 1, ' fps')]];
+                if (v.latency_ms != null) vioRows.push(['latency', v.latency_ms + ' ms']);
+                if (v.pose_jumps) vioRows.push(['jumps', v.pose_jumps, 'bad']);
                 if (q) {
                     vioRows.push(['tracking', q.tracking ? 'yes' : 'LOST', q.tracking ? 'good' : 'bad']);
                     vioRows.push(['quality', f(q.tracking_quality, 2)]);

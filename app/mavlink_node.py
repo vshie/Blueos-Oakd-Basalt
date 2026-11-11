@@ -7,18 +7,28 @@ import argparse
 import math
 from loguru import logger
 
+# Faster than any ROV moves; a pose change implying more is a VIO jump, not motion
+MAX_PLAUSIBLE_SPEED_MPS = 3.0
+# Deltas spanning a longer gap (VIO stall) aren't sent
+MAX_DELTA_SPAN_S = 2.0
+
 
 class MavlinkNode(dai.node.ThreadedHostNode):
     def __init__(self, mavlink_host="ws://127.0.0.1:6040/mavlink2rest/ws/mavlink?filter=SEND_ONLY", vehicle_id=1, component_id=195, camera_angle=0.0, quality_rate=1.0):
         dai.node.ThreadedHostNode.__init__(self)
-        self.inputTrans = self.createInput()
+        # Poses and the frames behind them are paired 1:1 by arrival order, so both queues are
+        # sized to absorb a short stall without dropping one side only
+        self.inputTrans = self.createInput(blocking=False, queueSize=8)
         self.inputQuality = self.createInput()
-        # self.inputImg = self.createInput()
-        
+        # The VIO node's passthrough frame, sent right after each pose. depthai's BasaltVIO and
+        # RTABMapVIO leave TransformData unstamped, so the capture time comes from this frame.
+        self.inputFrameTime = self.createInput(blocking=False, queueSize=8)
+        self._use_frame_times = False
+
         # Set possible datatypes for inputs
         self.inputTrans.setPossibleDatatypes([dai.Node.DatatypeHierarchy(dai.DatatypeEnum.TransformData, True)])
         self.inputQuality.setPossibleDatatypes([dai.Node.DatatypeHierarchy(dai.DatatypeEnum.VIOQualityData, True)])
-        # self.inputImg.setPossibleDatatypes([dai.Node.DatatypeHierarchy(dai.DatatypeEnum.ImgFrame, True)])
+        self.inputFrameTime.setPossibleDatatypes([dai.Node.DatatypeHierarchy(dai.DatatypeEnum.ImgFrame, True)])
         
         self.mavlink_host = mavlink_host
         self.vehicle_id = vehicle_id
@@ -57,6 +67,29 @@ class MavlinkNode(dai.node.ThreadedHostNode):
         self._fps_window_start = time.time()
         self._fps_window_count = 0
         self.fps = 0.0
+        self.latency_s = None
+        self.pose_jumps = 0
+        self._last_jump_log = 0.0
+
+    def link_frame_times(self, passthrough_output):
+        """Links the VIO node's passthrough image output, whose timestamps time the poses."""
+        passthrough_output.link(self.inputFrameTime)
+        self._use_frame_times = True
+
+    def _capture_time(self):
+        """(capture_us, latency_s) of the frame behind the pose just received, or (None, None)."""
+        if not self._use_frame_times:
+            return None, None
+        try:
+            frame = self.inputFrameTime.get()
+            ts = frame.getTimestamp()
+            latency_s = (dai.Clock.now() - ts).total_seconds()
+        except Exception as e:
+            logger.warning(f"No capture time for this pose ({e}), using arrival time")
+            return None, None
+        if not 0.0 <= latency_s < 5.0:
+            return None, None  # unset or nonsensical timestamp
+        return int(ts.total_seconds() * 1e6), latency_s
 
     def create_websocket_connection(self):
         """
@@ -326,17 +359,42 @@ class MavlinkNode(dai.node.ThreadedHostNode):
         dt_us = timestamp_us - self.prev_timestamp
         dt = dt_us / 1e6
         
+        if dt < 0.0 or dt > MAX_DELTA_SPAN_S:
+            # Out of order or a long gap: a delta over it would be meaningless, start again here
+            self.prev_translation = translation
+            self.prev_timestamp = timestamp_us
+            return self.smoothed_world_velocity, None, None
+
         # Avoid division by very small time differences
         if dt < 0.001:  # Less than 1ms
             return self.smoothed_world_velocity, None, None
-        
+
         # Calculate position delta in world frame
         world_position_delta = [
             translation.x - self.prev_translation.x,
             translation.y - self.prev_translation.y,
             translation.z - self.prev_translation.z
         ]
-        
+
+        # The VIO lost track or reset: RTAB-Map snaps back to the origin, and either backend can
+        # jump. Sent as a delta, that jump would look to the EKF like a sudden move and kick
+        # position hold, so skip it and carry on from the new pose.
+        speed = math.sqrt(sum(d * d for d in world_position_delta)) / dt
+        prev_moved = any(v != 0.0 for v in (self.prev_translation.x, self.prev_translation.y, self.prev_translation.z))
+        snapped_to_origin = prev_moved and translation.x == translation.y == translation.z == 0.0
+        if speed > MAX_PLAUSIBLE_SPEED_MPS or snapped_to_origin:
+            self.prev_translation = translation
+            self.prev_timestamp = timestamp_us
+            now = time.time()
+            with self.stats_lock:
+                self.pose_jumps += 1
+                jumps = self.pose_jumps
+            if now - self._last_jump_log > 5.0:
+                self._last_jump_log = now
+                reason = "snapped back to the origin" if snapped_to_origin else f"implied {speed:.1f} m/s"
+                logger.warning(f"Skipped a VIO pose jump ({reason}); {jumps} so far")
+            return self.smoothed_world_velocity, None, None
+
         # Calculate raw velocity in world frame (for VISION_SPEED_ESTIMATE)
         world_velocity = [
             world_position_delta[0] / dt,
@@ -421,9 +479,12 @@ class MavlinkNode(dai.node.ThreadedHostNode):
         
         return transformed_translation, transformed_quaternion
 
-    def _record_pose(self, translation, quaternion):
+    def _record_pose(self, translation, quaternion, latency_s=None):
         now = time.time()
         with self.stats_lock:
+            if latency_s is not None and 0.0 <= latency_s < 5.0:
+                # Capture-to-send delay, smoothed; VISO_DELAY_MS should match it
+                self.latency_s = latency_s if self.latency_s is None else 0.9 * self.latency_s + 0.1 * latency_s
             self.last_pose = (translation.x, translation.y, translation.z,
                               quaternion.qw, quaternion.qx, quaternion.qy, quaternion.qz)
             self.transform_count += 1
@@ -442,6 +503,8 @@ class MavlinkNode(dai.node.ThreadedHostNode):
                 "quality": dict(self.last_quality) if self.last_quality else None,
                 "transforms": self.transform_count,
                 "fps": round(self.fps, 2),
+                "latency_ms": round(self.latency_s * 1000.0) if self.latency_s is not None else None,
+                "pose_jumps": self.pose_jumps,
                 "mavlink_connected": self.ws_connected,
             }
 
@@ -467,13 +530,22 @@ class MavlinkNode(dai.node.ThreadedHostNode):
                     translation = trans_data.getTranslation()
                     quaternion = trans_data.getQuaternion()
                     timestamp_us = int(time.time() * 1e6)  # Current time in microseconds
-                    
+                    # Time the frame behind this pose was captured (host-synced clock). The delta's
+                    # time span must come from capture times: arrival times jitter with the Pi's
+                    # load, and the EKF divides the delta by this span to get velocity.
+                    capture_us, latency_s = self._capture_time()
+                    if capture_us is None:
+                        capture_us = timestamp_us
+                        if self._use_frame_times:
+                            # Don't span a delta across two different clocks; start again from here
+                            self.prev_translation = None
+
                     # Apply camera rotation transformation if needed
                     translation, quaternion = self.apply_camera_rotation(translation, quaternion)
-                    self._record_pose(translation, quaternion)
-                    
+                    self._record_pose(translation, quaternion, latency_s)
+
                     # Calculate velocity (world frame) and position delta (body frame) from position changes
-                    world_velocity, body_position_delta, time_delta_us = self.calculate_velocity_and_delta(translation, quaternion, timestamp_us)
+                    world_velocity, body_position_delta, time_delta_us = self.calculate_velocity_and_delta(translation, quaternion, capture_us)
                     
                     # Send pose data via MAVLink
                     #self.send_vision_position_estimate(translation, quaternion, timestamp_us)

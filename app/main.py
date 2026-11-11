@@ -65,6 +65,7 @@ DEFAULT_CONFIG = {
     "optical_flow_skip_frames": 1,
     # RTAB-Map
     "rtabmap_features": 500,
+    "rtabmap_local_map_size": 1000,
     # Image capture
     "center_capture_fps": 2.0,
     "stereo_capture_fps": 2.0,
@@ -93,6 +94,7 @@ class VIOConfig(BaseModel):
     vio_max_iterations: int = 3
     optical_flow_skip_frames: int = 1
     rtabmap_features: int = 500
+    rtabmap_local_map_size: int = 1000
     center_capture_fps: float = 2.0
     stereo_capture_fps: float = 2.0
     center_resolution: Literal[CENTER_RESOLUTIONS] = "1920x1080"
@@ -114,6 +116,13 @@ class VIOConfig(BaseModel):
     def _quality(cls, value):
         if not 1 <= value <= 100:
             raise ValueError("JPEG quality must be 1-100")
+        return value
+
+    @field_validator("rtabmap_local_map_size")
+    @classmethod
+    def _local_map_size(cls, value):
+        if not 200 <= value <= 5000:
+            raise ValueError("RTAB-Map local map size must be 200-5000")
         return value
 
     @field_validator("center_capture_fps", "stereo_capture_fps")
@@ -280,6 +289,7 @@ def start_vio():
             "--vio-iterations", str(config["vio_max_iterations"]),
             "--skip-frames", str(config["optical_flow_skip_frames"]),
             "--rtabmap-features", str(config["rtabmap_features"]),
+            "--rtabmap-local-map-size", str(config.get("rtabmap_local_map_size", 1000)),
             "--center-capture-fps", str(config["center_capture_fps"]),
             "--stereo-capture-fps", str(config["stereo_capture_fps"]),
             "--center-width", center_w, "--center-height", center_h,
@@ -735,4 +745,4 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8095)))

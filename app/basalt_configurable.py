@@ -53,6 +53,8 @@ def parse_args():
     parser.add_argument('--vio-iterations', type=int, default=3)
     parser.add_argument('--skip-frames', type=int, default=1)
     parser.add_argument('--rtabmap-features', type=int, default=500)
+    parser.add_argument('--rtabmap-local-map-size', type=int, default=1000,
+                        help="Descriptors kept in RTAB-Map's local map (OdomF2M/MaxSize; RTAB-Map's default is 2000)")
 
     # MAVLink settings
     parser.add_argument('--vehicle-ip', default='192.168.2.2')
@@ -120,6 +122,8 @@ def build_rtabmap(p, args, left, right, imu):
     stereo.setRectifyEdgeFillColor(0)
     stereo.enableDistortionCorrection(True)  # the OV9282 lenses on the OAK-D W are wide
     stereo.setDepthAlign(dai.CameraBoardSocket.CAM_B)
+    # On the OAK, so free for the Pi: less depth noise for RTAB-Map to reject
+    stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_5x5)
 
     feature_tracker.setHardwareResources(1, 2)
     feature_tracker.initialConfig.setCornerDetector(dai.FeatureTrackerConfig.CornerDetector.Type.HARRIS)
@@ -130,7 +134,14 @@ def build_rtabmap(p, args, left, right, imu):
     stereo.depth.link(odom.depth)
     feature_tracker.outputFeatures.link(odom.features)
     imu.out.link(odom.imu)
-    logger.info("Backend: RTAB-Map (stereo depth and feature tracking on the OAK)")
+    # The odometry is one thread on the Pi and is what limits the frame rate. Frame-to-map
+    # matching cost grows with the local map, so it is kept smaller than RTAB-Map's 2000.
+    odom.setParams({
+        "OdomF2M/MaxSize": str(args.rtabmap_local_map_size),
+        "Vis/MaxFeatures": str(args.rtabmap_features),
+    })
+    logger.info(f"Backend: RTAB-Map (stereo depth and feature tracking on the OAK, "
+                f"local map {args.rtabmap_local_map_size})")
     return odom
 
 
@@ -174,7 +185,9 @@ def build_capture(p, args, device, left, right, mavlink_publisher):
         fps = min(args.stereo_capture_fps, float(args.fps))
         for name, cam, socket, link in (("left", left, dai.CameraBoardSocket.CAM_B, capture.inputLeft),
                                         ("right", right, dai.CameraBoardSocket.CAM_C, capture.inputRight)):
-            out = cam.requestOutput((args.mono_width, args.mono_height), dai.ImgFrame.Type.GRAY8, fps=fps)
+            # The OAK's VideoEncoder takes 8-bit grey only as YUV400p; it rejects GRAY8 frames
+            frame_type = dai.ImgFrame.Type.GRAY8 if args.mono_host_encode else dai.ImgFrame.Type.YUV400p
+            out = cam.requestOutput((args.mono_width, args.mono_height), frame_type, fps=fps)
             if args.mono_host_encode:
                 out.link(link)
             else:
@@ -219,15 +232,24 @@ def main():
     print(f"📐 Camera Angle: {args.camera_angle}°")
     print(f"📡 MAVLink: {args.vehicle_ip}")
 
-    try:
-        if args.camera_ip:
-            logger.info(f"Connecting to camera at {args.camera_ip}")
-            pipeline = dai.Pipeline(dai.Device(args.camera_ip))
-        else:
-            logger.info("Connecting to the first camera found")
-            pipeline = dai.Pipeline()
-    except Exception as e:
-        fail(f"Could not connect to the camera{' at ' + args.camera_ip if args.camera_ip else ''}: {e}")
+    # A PoE OAK stays busy for a few seconds after the previous VIO process is killed (e.g. on a
+    # config save), so a restart retries instead of failing on the first X_LINK_DEVICE_NOT_FOUND
+    deadline = time.time() + 30.0
+    while True:
+        try:
+            if args.camera_ip:
+                logger.info(f"Connecting to camera at {args.camera_ip}")
+                pipeline = dai.Pipeline(dai.Device(args.camera_ip))
+            else:
+                logger.info("Connecting to the first camera found")
+                pipeline = dai.Pipeline()
+            break
+        except Exception as e:
+            if time.time() < deadline:
+                logger.warning(f"Camera not available yet ({e}), retrying")
+                time.sleep(3.0)
+                continue
+            fail(f"Could not connect to the camera{' at ' + args.camera_ip if args.camera_ip else ''}: {e}")
 
     with pipeline as p:
         device = p.getDefaultDevice()
@@ -257,6 +279,8 @@ def main():
             quality_rate=args.quality_rate
         )
         odom.transform.link(mavlink_publisher.inputTrans)
+        # The poses carry no timestamp; the frame each one was computed from does
+        mavlink_publisher.link_frame_times(odom.passthroughRect if args.backend == "rtabmap" else odom.passthrough)
         if args.backend == "basalt":
             # RTAB-Map has no quality output; MavlinkNode reads this input with tryGet()
             odom.quality.link(mavlink_publisher.inputQuality)

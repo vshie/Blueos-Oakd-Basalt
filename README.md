@@ -8,7 +8,7 @@ Tested target: Raspberry Pi 4 on **64-bit** BlueOS, ArduSub 4.7, Cockpit, Marine
 
 ## What it does on startup
 
-1. Starts the configuration page and Cockpit widget on port **8080**.
+1. Starts the configuration page and Cockpit widget on port **8095**. (Port 8080 is taken by `mavlink-server` from BlueOS 1.5 on; set the `PORT` environment variable in the extension's settings to use another.)
 2. Starts VIO with the saved settings and begins sending MAVLink.
 3. Checks the autopilot's EKF parameters (see below).
 4. Image recording is **off**. If Auto mode was enabled before the restart, it is re-armed.
@@ -18,7 +18,7 @@ Tested target: Raspberry Pi 4 on **64-bit** BlueOS, ArduSub 4.7, Cockpit, Marine
 1. **Network.** The C3 gets its IP address by DHCP. In BlueOS, open the network menu (top right), expand **eth0** and choose **Enable DHCP server**. You may need to power-cycle the ROV once with the camera connected.
 2. **Disable Madrona.** The camera accepts only one connection, so MarineSitu's Madrona extension must be disabled (BlueOS → Extensions → Installed) while this extension runs.
 3. **Camera IP** (optional). Leave it blank to use the first camera found, or press **Discover** on the configuration page and pick the C3. A fixed IP only helps if the address doesn't change; with BlueOS's DHCP it can.
-4. **EKF origin.** Set the origin and vehicle position from **Cockpit** at the dive site. The extension never sets the origin; it only shows whether one exists. Without an origin, images have no latitude or longitude.
+4. **EKF origin.** With a surface GPS connected (`GPS1_TYPE` enabled), the autopilot sets the origin itself from the first 3D fix; keep the GPS enabled for that. It isn't used for navigation (see `EK3_SRC_OPTIONS` below). Without a GPS, set the origin and vehicle position from **Cockpit** at the dive site. The extension never sets the origin; it only shows whether one exists. Without an origin, images have no latitude or longitude.
 
 The C3's link is **100 Mbit/s** on a BlueROV2. The configuration page estimates how much of it the chosen VIO and capture settings use.
 
@@ -34,6 +34,7 @@ Every time VIO starts, the extension reads these parameters from the autopilot (
 | `EK3_SRC1_POSXY` | 6 | Horizontal position from ExternalNav | no |
 | `EK3_SRC1_VELXY` | 6 | Horizontal velocity from ExternalNav | no |
 | `EK3_SRC1_POSZ` | 1 | Depth/altitude from the barometer | no |
+| `EK3_SRC_OPTIONS` | 0 | Don't fuse GPS velocity alongside the VIO's (bit 0, "fuse all velocities") | no |
 
 - **First run:** any parameter that differs is written automatically.
 - **After that:** differences are only reported. The **Autopilot Parameters** panel shows a table of current and required values; nothing is written until you press **Apply changes**. This protects an EKF setup you changed on purpose.
@@ -43,7 +44,18 @@ Every time VIO starts, the extension reads these parameters from the autopilot (
 - "Already applied once" is kept in `state.json`, separate from the settings, so **Reset Defaults** does not re-enable automatic writes. Delete `/usr/blueos/extensions/oakd-vio/state.json` to start over.
 - If mavlink2rest can't be reached, the log says `Could not reach mavlink2rest at http://<ip>/mavlink2rest: ...`. If it is reachable but no autopilot is talking yet, it reports that no HEARTBEAT has been seen.
 
-Don't run this alongside another source of `VISION_POSITION_DELTA`, such as a Water Linked DVL extension.
+Don't run this alongside another source of `VISION_POSITION_DELTA`, such as a Water Linked DVL extension: disable it under BlueOS → Extensions → Installed.
+
+### Position hold tuning
+
+`VISO_DELAY_MS` tells the EKF how old each VIO measurement is when it arrives. ArduPilot uses only this parameter, not the message timestamps. Left at its default of 10 ms, the EKF treats a measurement that is really 100–250 ms old as current. Position hold then corrects late and overshoots, and the oscillation grows.
+
+1. Let VIO run and read the **latency** in the widget or on the configuration page. It is measured from frame capture to sending.
+2. Set `VISO_DELAY_MS` to that value, rounded up by ~20 ms for the trip through mavlink2rest. The maximum is 250.
+3. Retest. If position hold still oscillates, lower `PSC_VELXY_P` and then `PSC_POSXY_P`. A 10 fps position source supports less gain than a DVL.
+4. If the vehicle runs away or circles instead of oscillating, check the axes. Push the ROV forward and to the right by hand, and `LOCAL_POSITION_NED` x and y should both increase when facing north. If not, check **Camera Angle**.
+
+The widget also counts **pose jumps**: pose changes that imply more than 3 m/s, or RTAB-Map snapping back to the origin after losing track. These aren't sent to the autopilot. A climbing count means tracking is failing.
 
 ## MAVLink output
 
@@ -80,7 +92,7 @@ Names are at most 10 characters, as MAVLink requires.
 - the vehicle's estimated position, heading, depth and altitude
 - camera, IMU, chip temperature, parameter state and whether the EKF origin is set
 
-For bench work you can also add a plain iframe widget pointing at `http://<vehicle>:8080/widget`.
+For bench work you can also add a plain iframe widget pointing at `http://<vehicle>:8095/widget`.
 
 ## VIO backends
 
@@ -89,7 +101,15 @@ For bench work you can also add a plain iframe widget pointing at `http://<vehic
 | **Basalt** (default) | image capture | optical flow and optimisation (Basalt) | yes |
 | **RTAB-Map** | stereo depth, rectification, feature tracking | RTAB-Map odometry only | no |
 
-RTAB-Map moves most of the image processing onto the OAK, so it allows higher frame rates on a Pi 4. Compare the two on your vehicle (CPU load in `htop`, achieved FPS in the widget, and how well tracking holds). Luxonis' `basalt_vio_rtab` example combines Basalt with `RTABMapSLAM`; that mapping runs on the host, so it would add load rather than remove it, and isn't used here.
+RTAB-Map moves most of the image processing onto the OAK, so it allows higher frame rates on a Pi 4. Compare the two on your vehicle (CPU load in `htop`, achieved FPS in the widget, and how well tracking holds).
+
+What limits RTAB-Map, measured on a Pi 4:
+
+- **Frame rate.** At 3 fps RTAB-Map doesn't track: its poses stay at the origin. Use about **10 fps**.
+- **The Pi.** RTAB-Map's odometry is one thread on the Pi, so it can use only one of the four cores; the container itself has no CPU limit. With the rest of BlueOS running, one core manages about 5–11 fps. Asking the camera for more just sends frames the Pi drops: at 30 fps about 57 Mbit/s of the C3's 100 Mbit/s link carried mostly discarded depth and images.
+- **Local Map Size** (`OdomF2M/MaxSize`) sets how many descriptors each frame is matched against. The default here is 1000 rather than RTAB-Map's 2000, which roughly halves that work. Raise it if tracking drops out; lower it for speed.
+- A 5×5 median filter cleans up the depth map on the OAK at no cost to the Pi.
+- Running all of VIO on the camera needs an RVC4 (OAK 4) camera. This RVC2 OAK can only do the depth and feature tracking. Luxonis' `basalt_vio_rtab` example combines Basalt with `RTABMapSLAM`; that mapping runs on the host, so it would add load rather than remove it, and isn't used here.
 
 ## Image capture
 
@@ -164,12 +184,12 @@ Only the IMU extrinsics are written; the C3's in-water camera calibration is lef
 
 ## Configuration page
 
-Open `http://<vehicle>:8080` (or the extension's entry in the BlueOS menu). Saving restarts VIO with the new values. Settings are stored in `/usr/blueos/extensions/oakd-vio/config.json`, so they survive restarts and updates.
+Open `http://<vehicle>:8095` (or the extension's entry in the BlueOS menu). Saving restarts VIO with the new values. Settings are stored in `/usr/blueos/extensions/oakd-vio/config.json`, so they survive restarts and updates.
 
 | Setting | Default | Notes |
 |---|---|---|
 | Camera IP | blank | Blank = first camera found |
-| VIO FPS | 3 | Stereo frame rate for VIO. The Raspberry Pi CPU is the limit with Basalt; raise it slowly |
+| VIO FPS | 3 | Stereo frame rate for VIO. The Raspberry Pi CPU is the limit with Basalt; raise it slowly. RTAB-Map needs about 10 |
 | Camera Angle (°) | 0 | Downward pitch of the camera. 0 = facing forward, 90 = facing down |
 | VIO Width × Height | 320 × 200 | Mono resolution fed to VIO |
 | Backend | Basalt | Basalt or RTAB-Map, see above |
@@ -181,6 +201,7 @@ Open `http://<vehicle>:8080` (or the extension's entry in the BlueOS menu). Savi
 | Max Keyframes | 4 | Basalt. Keyframes kept in the optimisation |
 | VIO Iterations | 3 | Basalt. Optimiser iterations per frame |
 | Tracked Features | 500 | RTAB-Map. Features tracked on the OAK |
+| Local Map Size | 1000 | RTAB-Map. Descriptors in the local map each frame is matched against (`OdomF2M/MaxSize`; RTAB-Map's default is 2000) |
 | Centre Capture FPS | 2 | 0 = off |
 | Centre Resolution | 1920 × 1080 | 4056 × 3040, 3840 × 2160 or 1920 × 1080 |
 | Stereo Capture FPS | 2 | 0 = off; at most the VIO FPS |
@@ -229,7 +250,7 @@ In BlueOS, go to **Extensions → Installed → +** and fill in:
 
 ```json
 {
-  "ExposedPorts": {"8080/tcp": {}},
+  "ExposedPorts": {"8095/tcp": {}},
   "HostConfig": {
     "NetworkMode": "host",
     "Binds": ["/dev/:/dev/", "/usr/blueos/extensions/oakd-vio:/app/data"],
@@ -319,6 +340,6 @@ docker run --rm -v "$PWD/tests:/tests" blueos-oakd-basalt:local python -m unitte
 
 - `VISION_POSITION_DELTA` reports a fixed confidence of 100% and no rotation delta.
 - The RTAB-Map backend sends no `VIO_*` quality messages.
-- If the camera isn't reachable when the extension starts, VIO exits and isn't retried. Press **Start** on the configuration page once the camera is up, or restart the extension.
+- VIO retries the camera for 30 seconds when it starts, since a PoE OAK stays busy for a few seconds after a restart. If it still isn't reachable, VIO exits; press **Start** on the configuration page once the camera is up, or restart the extension.
 - The IMX378 colour camera isn't hardware-synchronised with the stereo pair, so centre and stereo images are labelled independently; match them by timestamp in the CSVs.
 - Stopping the container takes about 10 seconds, because the entrypoint doesn't forward the stop signal.

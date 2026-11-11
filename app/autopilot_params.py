@@ -1,6 +1,7 @@
 """
 Checks and sets the autopilot's EKF parameters for the VISION_POSITION_DELTA messages sent by this
-extension, and makes sure the EKF has an origin.
+extension, and reads the EKF origin. The origin itself comes from the GPS's first 3D fix at the
+surface (or is set by hand from the GCS); set_origin() is available but not called automatically.
 """
 
 import json
@@ -17,6 +18,9 @@ VISUAL_ODOMETRY_PARAMS = [
     ("EK3_SRC1_POSXY", 6, False),  # ExternalNav
     ("EK3_SRC1_VELXY", 6, False),  # ExternalNav
     ("EK3_SRC1_POSZ", 1, False),   # Baro
+    # Bit 0 ("fuse all velocities") would blend GPS velocity in with the VIO's. GPS stays enabled
+    # so a surface fix still sets the EKF origin.
+    ("EK3_SRC_OPTIONS", 0, False),
 ]
 
 MAV_MODE_FLAG_SAFETY_ARMED = 128

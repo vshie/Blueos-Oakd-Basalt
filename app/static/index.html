@@ -145,8 +145,9 @@
                 </div>
                 <div class="field">
                     <label>VIO FPS</label>
-                    <input type="number" name="fps" min="1" max="60">
-                    <div class="hint">Lower = less CPU usage</div>
+                    <input type="number" name="fps" min="1" max="60" oninput="updateBackendFields()">
+                    <div class="hint">Lower = less CPU usage. RTAB-Map: ~10 on a Pi 4</div>
+                    <div id="fps-warning" class="hint warn" style="display:none">RTAB-Map loses tracking below ~8 fps. ~10 fps is what a Pi 4 sustains; more only adds frames the Pi drops.</div>
                 </div>
                 <div class="field">
                     <label>Camera Angle (°)</label>
@@ -206,6 +207,11 @@
                     <label>Tracked Features</label>
                     <input type="number" name="rtabmap_features" min="50" max="2000">
                     <div class="hint">Features tracked on the OAK</div>
+                </div>
+                <div class="field rtabmap">
+                    <label>Local Map Size</label>
+                    <input type="number" name="rtabmap_local_map_size" min="200" max="5000">
+                    <div class="hint">Descriptors RTAB-Map matches each frame against (RTAB-Map default 2000). Smaller = faster on the Pi</div>
                 </div>
             </div>
 
@@ -356,6 +362,8 @@
             const backend = document.getElementById('config-form').elements['vio_backend'].value;
             document.querySelectorAll('.field.basalt').forEach(e => e.classList.toggle('disabled', backend !== 'basalt'));
             document.querySelectorAll('.field.rtabmap').forEach(e => e.classList.toggle('disabled', backend !== 'rtabmap'));
+            const fps = parseFloat(document.getElementById('config-form').elements['fps'].value);
+            document.getElementById('fps-warning').style.display = backend === 'rtabmap' && fps < 8 ? '' : 'none';
         }
 
         function updateEstimate() {
@@ -573,6 +581,8 @@
                     const q = v.quality;
                     let line = `VIO running (${t.vio.backend}) · ${fmt(v.fps, 1)} fps`;
                     if (q) line += ` · ${q.tracking ? 'tracking' : 'LOST'} · quality ${fmt(q.tracking_quality, 2)}`;
+                    if (v.latency_ms != null) line += ` · ${v.latency_ms} ms latency (set VISO_DELAY_MS ≈ ${v.latency_ms})`;
+                    if (v.pose_jumps) line += ` · ${v.pose_jumps} pose jumps skipped`;
                     if (t.vio.imu) line += ` · IMU ${t.vio.imu}`;
                     if (t.vio.chip_temp_c) line += ` · ${t.vio.chip_temp_c} °C`;
                     if (t.vio.stale) line += ' · no update for 5 s';
