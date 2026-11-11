@@ -204,7 +204,7 @@ Open `http://<vehicle>:8095` (or the extension's entry in the BlueOS menu). Savi
 | Local Map Size | 1000 | RTAB-Map. Descriptors in the local map each frame is matched against (`OdomF2M/MaxSize`; RTAB-Map's default is 2000) |
 | Centre Capture FPS | 2 | 0 = off |
 | Centre Resolution | 1920 × 1080 | 4056 × 3040, 3840 × 2160 or 1920 × 1080 |
-| Stereo Capture FPS | 2 | 0 = off; at most the VIO FPS |
+| Stereo Capture FPS | 2 | 0 = off. Stereo pairs come from the VIO sensors, so this is capped at the VIO FPS; a higher value is kept and applies again when the VIO FPS allows (e.g. after switching backend) |
 | Stereo Resolution | 1280 × 800 | or 640 × 400 |
 | JPEG Quality | 90 | |
 | Minimum Free Space (GB) | 2 | Recording stops below this |

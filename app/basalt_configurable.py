@@ -182,7 +182,11 @@ def build_capture(p, args, device, left, right, mavlink_publisher):
         logger.info(f"Capturing centre {args.center_width}x{args.center_height} at {fps} fps")
 
     if args.stereo_capture_fps > 0:
+        # Stereo pairs come from the sensors that feed VIO, so they can't run faster than it
         fps = min(args.stereo_capture_fps, float(args.fps))
+        if fps < args.stereo_capture_fps:
+            logger.info(f"Stereo capture capped at the VIO frame rate: {fps:g} fps "
+                        f"(set to {args.stereo_capture_fps:g})")
         for name, cam, socket, link in (("left", left, dai.CameraBoardSocket.CAM_B, capture.inputLeft),
                                         ("right", right, dai.CameraBoardSocket.CAM_C, capture.inputRight)):
             # The OAK's VideoEncoder takes 8-bit grey only as YUV400p; it rejects GRAY8 frames

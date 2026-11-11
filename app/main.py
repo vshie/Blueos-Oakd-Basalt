@@ -146,12 +146,10 @@ class VIOConfig(BaseModel):
             data = {**data, "fps": BACKEND_DEFAULT_FPS.get(data.get("vio_backend", "basalt"), 3)}
         return data
 
-    @model_validator(mode="after")
-    def _stereo_rate(self):
-        # Stereo captures are taken from the sensors that feed VIO, so they can't run faster
-        if self.stereo_capture_fps > self.fps:
-            raise ValueError(f"Stereo capture rate can't exceed the VIO FPS ({self.fps})")
-        return self
+    # A stereo capture rate above the VIO frame rate isn't an error: stereo pairs come from the
+    # sensors that feed VIO, so the VIO process caps it at the VIO rate when it builds the
+    # pipeline. Keeping the user's value means switching backend (and so frame rate) back and
+    # forth always saves, and restores the capture rate they chose.
 
 
 # VIO process handle
